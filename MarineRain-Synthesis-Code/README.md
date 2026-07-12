@@ -329,13 +329,4 @@ python tools/crop_marked_regions.py \
 
 ## Citation
 
-If you use MarineRain in your research, please cite the corresponding paper. The publication fields can be updated with the final proceedings information after publication.
 
-```bibtex
-@inproceedings{zhang2026marinerain,
-  title     = {From Real Rain Streaks to Physically Grounded Marine Rain--Fog Images: The MarineRain Benchmark},
-  author    = {Zhang, Dan and Gao, Jingchen and Xu, Yingbin and Chen, Yaoran and Peng, Yan and Zhou, Yang and Ma, Liyan},
-  booktitle = {ICAIP 2026},
-  year      = {2026}
-}
-```
