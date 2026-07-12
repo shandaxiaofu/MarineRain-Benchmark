@@ -1,0 +1,20 @@
+# Reference pip environment for MarineRain synthesis.
+# Recommended interpreter: Python 3.10.x
+# Install with: python -m pip install -r environments.txt
+
+# Core numerical and image processing
+numpy==1.26.4
+opencv-python==4.9.0.80
+Pillow==10.2.0
+tqdm==4.66.2
+
+# Monodepth2 inference; torch and torchvision versions must remain compatible.
+torch==2.2.2
+torchvision==0.17.2
+
+# Imported by archived historical scripts.
+matplotlib==3.8.3
+
+# Imported by evaluation/ scripts.
+ultralytics==8.2.0
+pillow-heif==0.16.0
