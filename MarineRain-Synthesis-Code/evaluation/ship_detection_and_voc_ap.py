@@ -1,69 +1,111 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-单进程 + 批处理：用 YOLOv8（COCO 预训练）检测文件夹内图片中的“船（boat）”。
-- 在 NMS 阶段即限制类别为 boat（非事后过滤），更干净、速度也更快。
-- CPU 默认运行；支持 HEIC/HEIF（需安装 pillow-heif）。
-- 导出：总 CSV（逐框） + 逐图汇总 CSV；可选保存画框图。
-
-依赖安装：
-  pip install ultralytics pillow tqdm
-  # 如需 HEIC/HEIF 支持（iPhone 原片）：
-  pip install pillow-heif
-"""
+"""YOLOv8 boat detection with optional VOC-style AP evaluation."""
 
 from __future__ import annotations
+import argparse
 import csv
 from pathlib import Path
 from typing import List, Iterable, Tuple, Dict, Any
 import xml.etree.ElementTree as ET
-import math
 
 from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 
-# ============ CONFIG（在此修改） ============
-IMAGE_DIR = r"D:\ocean\detect\MRF"       # 输入图片目录（递归）
-OUT_CSV   = r"./outputs/boats.csv"  # 检测结果 CSV（逐框）
-DRAW_DIR  = r"D:/ocean/out/MRF"        # 画框输出目录；设为 "" 或 None 可关闭
-
-# VOC 标注（XML）目录；如设置为有效路径，将在检测完成后基于 VOC 计算 boat 的 AP/mAP@0.5
-VOC_ANN_DIR = r"D:/Monadepth/out_vis/VOC/Annotations"  # 例：r"D:/ocean/VOC/Annotations"
-
-# 评估相关
-EVAL_CLASS_NAME = "boat"            # VOC 标注里对应的类别名（区分大小写与否见下）
+# Evaluation behavior used by helper functions and configured in main().
+EVAL_CLASS_NAME = "boat"
 EVAL_CLASS_NAME_CASE_INSENSITIVE = True
-IOU_THRESH_AP  = 0.1              # VOC2007 mAP@0.5
-VOC2007_11POINT = True               # True: 11 点插值（VOC2007）；False: 积分法（VOC2010+）
+VOC2007_11POINT = True
 
-DEVICE    = "cpu"                   # 你的机器无 CUDA：请设 'cpu'
-MODEL     = "yolov8s.pt"            # 也可用 yolov8n.pt（更快更弱）
-IMG_SIZE  = 1280                    # 640/960/1280；大分辨率更利于小目标
-MIN_CONF  = 0.25                   # 低阈值提高召回
-IOU       = 0.5                     # NMS IOU；保持默认或略高
-MAX_DET   = 300                     # 每张图最大检测数
-BATCH_SIZE = 2                      # CPU 环境建议 1~2；显存/内存吃紧就更小
-
-WRITE_PER_IMAGE_SUMMARY = True      # 写出逐图统计 CSV
-ENABLE_HEIC = True                  # 启用 HEIC/HEIF 支持（需要安装 pillow-heif）
-DEBUG_LIST_FIRST = 5                # 启动时打印前 N 张图片路径；设 0 不打印
-# ==========================================
-
-
-# 支持的扩展名
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 
-# 可选启用 HEIC/HEIF 支持
-if ENABLE_HEIC:
+
+def enable_heic_support(enabled: bool) -> None:
+    """Register HEIC/HEIF support when pillow-heif is available."""
+    if not enabled:
+        return
     try:
         import pillow_heif  # type: ignore
         pillow_heif.register_heif_opener()
         IMG_EXTS |= {".heic", ".heif"}
-        print("[DEBUG] HEIC/HEIF enabled")
+        print("[INFO] HEIC/HEIF support enabled")
     except Exception as e:
-        print("[DEBUG] HEIC not enabled:", e)
+        print("[WARN] HEIC/HEIF support unavailable:", e)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Detect COCO 'boat' objects with YOLOv8, export bounding boxes, "
+            "and optionally evaluate VOC-style AP."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--image-dir", type=Path, required=True, help="Input image directory.")
+    parser.add_argument(
+        "--out-csv",
+        type=Path,
+        default=Path("outputs/boats.csv"),
+        help="Per-detection CSV output path.",
+    )
+    parser.add_argument(
+        "--draw-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for images with predicted boxes.",
+    )
+    parser.add_argument(
+        "--voc-ann-dir",
+        type=Path,
+        default=None,
+        help="Optional Pascal VOC XML annotation directory.",
+    )
+    parser.add_argument("--class-name", default="boat", help="Target class name.")
+    parser.add_argument(
+        "--case-sensitive",
+        action="store_true",
+        help="Use case-sensitive VOC class-name matching.",
+    )
+    parser.add_argument(
+        "--iou-thresh-ap",
+        type=float,
+        default=0.5,
+        help="IoU threshold used for VOC AP evaluation.",
+    )
+    parser.add_argument(
+        "--voc2007-11point",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use VOC2007 11-point AP instead of continuous integration.",
+    )
+    parser.add_argument("--device", default="cpu", help="Ultralytics device, e.g. cpu, 0, or mps.")
+    parser.add_argument("--model", default="yolov8s.pt", help="YOLO model path or name.")
+    parser.add_argument("--img-size", type=int, default=1280, help="Inference image size.")
+    parser.add_argument("--min-confidence", type=float, default=0.25, help="Confidence threshold.")
+    parser.add_argument("--nms-iou", type=float, default=0.5, help="NMS IoU threshold.")
+    parser.add_argument("--max-detections", type=int, default=300, help="Maximum detections per image.")
+    parser.add_argument("--batch-size", type=int, default=2, help="Prediction batch size.")
+    parser.add_argument(
+        "--write-summary",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write a per-image summary CSV.",
+    )
+    parser.add_argument(
+        "--enable-heic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable HEIC/HEIF reading through pillow-heif.",
+    )
+    parser.add_argument(
+        "--debug-list-first",
+        type=int,
+        default=0,
+        help="Print the first N discovered image paths.",
+    )
+    return parser
 
 
 def list_images(root: Path) -> List[Path]:
@@ -77,7 +119,12 @@ def chunks(lst: List[str], batch: int) -> Iterable[List[str]]:
         yield lst[i:i + batch]
 
 
-def draw_boxes(img_path: Path, boxes: List[Tuple[int, int, int, int, float]], out_dir: Path):
+def draw_boxes(
+    img_path: Path,
+    boxes: List[Tuple[int, int, int, int, float]],
+    out_dir: Path,
+    class_name: str,
+):
     """
     在图上画船框后保存。
     boxes: [(x1,y1,x2,y2,score), ...]
@@ -87,7 +134,7 @@ def draw_boxes(img_path: Path, boxes: List[Tuple[int, int, int, int, float]], ou
         draw = ImageDraw.Draw(im, "RGBA")
         for (x1, y1, x2, y2, score) in boxes:
             draw.rectangle((x1, y1, x2, y2), outline=(0, 255, 0, 255), width=3)
-            label = f"boat:{score:.2f}"
+            label = f"{class_name}:{score:.2f}"
             tw = draw.textlength(label); th = 14
             draw.rectangle((x1, max(0, y1 - th - 6), x1 + tw + 8, y1), fill=(0, 255, 0, 100))
             draw.text((x1 + 4, max(0, y1 - th - 2)), label, fill=(0, 0, 0, 255))
@@ -238,7 +285,7 @@ def compute_ap(precisions: List[float], recalls: List[float]) -> float:
 
 def evaluate_map_from_csv(csv_path: Path, ann_dir: Path, cls_name: str, iou_thresh: float = 0.5) -> Dict[str, float]:
     """
-    仅评估单类（boat）：返回 {"AP@0.5": ap, "mAP@0.5": ap}
+    Evaluate one target class and return its AP and single-class mAP.
     """
     # 读取预测
     detections: List[Tuple[str, float, Tuple[int, int, int, int]]] = []  # (img_key, score, bbox)
@@ -324,25 +371,36 @@ def evaluate_map_from_csv(csv_path: Path, ann_dir: Path, cls_name: str, iou_thre
         recalls.append(recall)
 
     ap = compute_ap(precisions, recalls)
-    return {"AP@0.5": ap, "mAP@0.5": ap}
+    return {"AP": ap, "mAP": ap}
 
 
 def main():
-    img_root = Path(IMAGE_DIR)
-    out_csv = Path(OUT_CSV)
-    draw_dir = Path(DRAW_DIR) if DRAW_DIR else None
+    global EVAL_CLASS_NAME
+    global EVAL_CLASS_NAME_CASE_INSENSITIVE
+    global VOC2007_11POINT
 
-    if not img_root.exists():
-        raise FileNotFoundError(f"输入路径不存在：{img_root}")
+    args = build_parser().parse_args()
+    EVAL_CLASS_NAME = args.class_name
+    EVAL_CLASS_NAME_CASE_INSENSITIVE = not args.case_sensitive
+    VOC2007_11POINT = args.voc2007_11point
+    enable_heic_support(args.enable_heic)
+
+    img_root = args.image_dir.expanduser().resolve()
+    out_csv = args.out_csv.expanduser().resolve()
+    draw_dir = args.draw_dir.expanduser().resolve() if args.draw_dir else None
+
+    if not img_root.is_dir():
+        raise NotADirectoryError(f"Input image directory does not exist: {img_root}")
 
     paths = list_images(img_root)
     images = [str(p) for p in paths]
-    print(f"[DEBUG] IMAGE_DIR={img_root} -> found {len(images)} images")
-    if DEBUG_LIST_FIRST > 0:
-        print("[DEBUG] first", min(DEBUG_LIST_FIRST, len(images)), ":", images[:DEBUG_LIST_FIRST])
+    print(f"[INFO] Found {len(images)} image(s) in {img_root}")
+    if args.debug_list_first > 0:
+        count = min(args.debug_list_first, len(images))
+        print(f"[INFO] First {count} image path(s):", images[:count])
 
     if not images:
-        print("未找到图片。支持的后缀：", ", ".join(sorted(IMG_EXTS)))
+        print("No images found. Supported extensions:", ", ".join(sorted(IMG_EXTS)))
         return
 
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -351,21 +409,28 @@ def main():
 
     # 加载模型
     from ultralytics import YOLO
-    model = YOLO(MODEL)
+    model = YOLO(args.model)
 
     # 找到 'boat' 类的 id，用于 classes 过滤（NMS 前过滤）
     # 兼容 names 为 dict 或 list
     boat_ids = []
     if hasattr(model, "names"):
         if isinstance(model.names, dict):
-            boat_ids = [i for i, n in model.names.items() if str(n).lower() == "boat"]
+            boat_ids = [
+                i
+                for i, name in model.names.items()
+                if str(name).lower() == args.class_name.lower()
+            ]
         elif isinstance(model.names, (list, tuple)):
-            for i, n in enumerate(model.names):
-                if str(n).lower() == "boat":
+            for i, name in enumerate(model.names):
+                if str(name).lower() == args.class_name.lower():
                     boat_ids.append(i)
 
     if not boat_ids:
-        print("[WARN] 未在模型类别表里找到 'boat'，将退化为事后按名称过滤。")
+        print(
+            f"[WARN] Class '{args.class_name}' was not found in the model class table; "
+            "falling back to post-filtering."
+        )
 
     # 打开结果 CSV
     with open(out_csv, "w", newline="", encoding="utf-8") as fout:
@@ -373,7 +438,7 @@ def main():
         writer.writerow(["image_path", "label", "x_min", "y_min", "x_max", "y_max", "score"])
 
         # 逐图汇总 CSV（可选）
-        if WRITE_PER_IMAGE_SUMMARY:
+        if args.write_summary:
             out_sum = out_csv.with_name(out_csv.stem + "_per_image_summary.csv")
             fsum = open(out_sum, "w", newline="", encoding="utf-8")
             sum_writer = csv.writer(fsum)
@@ -384,15 +449,15 @@ def main():
         total_written = 0
 
         # 批处理预测
-        for batch_paths in tqdm(list(chunks(images, BATCH_SIZE)), desc="Predict"):
+        for batch_paths in tqdm(list(chunks(images, args.batch_size)), desc="Predict"):
             # 预测参数；若能拿到 boat_ids，则在 NMS 前即限制类别
             predict_kwargs = dict(
                 source=batch_paths,
-                imgsz=IMG_SIZE,
-                conf=MIN_CONF,
-                iou=IOU,
-                max_det=MAX_DET,
-                device=DEVICE,
+                imgsz=args.img_size,
+                conf=args.min_confidence,
+                iou=args.nms_iou,
+                max_det=args.max_detections,
+                device=args.device,
                 verbose=False
             )
             if boat_ids:
@@ -424,10 +489,10 @@ def main():
 
                             # 如果 classes 生效，则理论上这里只会有 boat；
                             # 若 boat_ids 为空（没找到类别名），则事后按名称过滤：
-                            if boat_ids and cls_name != "boat":
+                            if boat_ids and cls_name != args.class_name.lower():
                                 # 极少数权重/版本差异情况下的兜底
                                 continue
-                            if not boat_ids and cls_name != "boat":
+                            if not boat_ids and cls_name != args.class_name.lower():
                                 continue
 
                             boat_cnt += 1
@@ -441,7 +506,7 @@ def main():
                     # 可视化
                     if draw_dir and vis_boxes:
                         try:
-                            draw_boxes(Path(ip), vis_boxes, draw_dir)
+                            draw_boxes(Path(ip), vis_boxes, draw_dir, args.class_name)
                         except Exception:
                             pass
 
@@ -455,33 +520,41 @@ def main():
         if fsum:
             fsum.close()
 
-    print("完成！")
-    print(f"- 结果 CSV：{out_csv}")
-    if WRITE_PER_IMAGE_SUMMARY:
-        print(f"- 每图汇总：{out_csv.with_name(out_csv.stem + '_per_image_summary.csv')}")
+    print("Detection complete.")
+    print(f"- Detection CSV: {out_csv}")
+    if args.write_summary:
+        print(f"- Per-image summary: {out_csv.with_name(out_csv.stem + '_per_image_summary.csv')}")
     if draw_dir:
-        print(f"- 可视化输出：{draw_dir.resolve()}")
-    print(f"- 写入框总数：{total_written}")
+        print(f"- Visualizations: {draw_dir.resolve()}")
+    print(f"- Total written boxes: {total_written}")
 
     # 如提供 VOC 标注目录，则执行评估
-    if VOC_ANN_DIR:
-        ann_dir = Path(VOC_ANN_DIR)
+    if args.voc_ann_dir:
+        ann_dir = args.voc_ann_dir.expanduser().resolve()
         if ann_dir.exists() and ann_dir.is_dir():
             try:
-                metrics = evaluate_map_from_csv(out_csv, ann_dir, EVAL_CLASS_NAME, IOU_THRESH_AP)
-                ap = metrics.get("AP@0.5", 0.0)
-                print(f"[EVAL] {EVAL_CLASS_NAME} AP@{IOU_THRESH_AP:.2f} (VOC{'2007' if VOC2007_11POINT else '2010+'}): {ap:.4f}")
+                metrics = evaluate_map_from_csv(
+                    out_csv,
+                    ann_dir,
+                    EVAL_CLASS_NAME,
+                    args.iou_thresh_ap,
+                )
+                ap = metrics.get("AP", 0.0)
+                print(
+                    f"[EVAL] {EVAL_CLASS_NAME} AP@{args.iou_thresh_ap:.2f} "
+                    f"(VOC{'2007' if VOC2007_11POINT else '2010+'}): {ap:.4f}"
+                )
                 # 写入评估结果
                 out_metrics = out_csv.with_name(out_csv.stem + "_metrics.txt")
                 with open(out_metrics, "w", encoding="utf-8") as fm:
                     fm.write(f"class,{EVAL_CLASS_NAME}\n")
-                    fm.write(f"AP@{IOU_THRESH_AP:.2f},{ap:.6f}\n")
-                    fm.write(f"mAP@{IOU_THRESH_AP:.2f},{ap:.6f}\n")
-                print(f"- 评估结果：{out_metrics}")
+                    fm.write(f"AP@{args.iou_thresh_ap:.2f},{ap:.6f}\n")
+                    fm.write(f"mAP@{args.iou_thresh_ap:.2f},{ap:.6f}\n")
+                print(f"- Evaluation metrics: {out_metrics}")
             except Exception as e:
-                print(f"[EVAL] 评估失败：{e}")
+                print(f"[EVAL] Evaluation failed: {e}")
         else:
-            print(f"[EVAL] 未找到 VOC 标注目录或无效：{ann_dir}")
+            print(f"[EVAL] Invalid VOC annotation directory: {ann_dir}")
 
 
 if __name__ == "__main__":

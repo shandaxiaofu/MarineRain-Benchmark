@@ -58,8 +58,6 @@ MarineRain-Synthesis-Code/
 ├── generate_marinerain.py       # Command-line entry point
 ├── marinerain_pipeline.py       # Depth estimation and synthesis implementation
 ├── environments.txt             # Reference Python environment
-├── CODE_AUDIT.md                # Implementation-alignment notes
-├── FILE_RENAME_MAP.md           # Historical-source organization record
 ├── .gitignore
 │
 ├── utils/                       # Monodepth2 network modules
@@ -70,12 +68,11 @@ MarineRain-Synthesis-Code/
 ├── models/                      # Local model-weight directory
 │   └── README.md
 │
-├── archive/historical_pipeline/ # Archived experimental scripts
 ├── evaluation/                  # YOLOv8-based ship-detection evaluation
 └── tools/                       # Image-region visualization utilities
 ```
 
-The recommended entry point is `generate_marinerain.py`. Scripts under `archive/` are retained for experiment provenance and are not required by the canonical pipeline.
+The recommended synthesis entry point is `generate_marinerain.py`.
 
 ## Requirements
 
@@ -101,7 +98,7 @@ python -m pip install --upgrade pip
 python -m pip install -r environments.txt
 ```
 
-Core dependencies include PyTorch, torchvision, OpenCV, NumPy, Pillow, and tqdm. The environment file also includes the packages used by the optional evaluation and archived scripts.
+Core dependencies include PyTorch, torchvision, OpenCV, NumPy, Pillow, and tqdm. The environment file also includes the packages used by the optional evaluation utilities.
 
 ## Monodepth2 Weights
 
@@ -280,6 +277,48 @@ Using the same ordered inputs, model weights, dependency environment, and random
 ## Evaluation Utilities
 
 The `evaluation/` directory contains optional YOLOv8-based tools for boat detection and VOC-style AP evaluation. These scripts are separate from the synthesis pipeline and require the evaluation dependencies listed in `environments.txt`.
+
+Run boat detection on a directory of images:
+
+```bash
+python evaluation/ship_detection_and_voc_ap.py \
+  --image-dir outputs/marinerain/rainy \
+  --out-csv outputs/detection/boats.csv \
+  --draw-dir outputs/detection/visualizations \
+  --model yolov8s.pt \
+  --device cpu
+```
+
+To additionally compute VOC-style boat AP, provide the annotation directory:
+
+```bash
+python evaluation/ship_detection_and_voc_ap.py \
+  --image-dir outputs/marinerain/rainy \
+  --out-csv outputs/detection/boats.csv \
+  --voc-ann-dir data/VOC/Annotations \
+  --iou-thresh-ap 0.5
+```
+
+Debug detection on a single image:
+
+```bash
+python evaluation/debug_single_image_detection.py \
+  --image data/example.jpg \
+  --model yolov8s.pt \
+  --device cpu
+```
+
+## Visualization Tool
+
+`tools/crop_marked_regions.py` detects red rectangles in a reference image, applies the same regions to a directory of aligned images, and exports both crops and boxed previews:
+
+```bash
+python tools/crop_marked_regions.py \
+  --reference-image figures/reference_with_red_boxes.png \
+  --input-dir figures/comparison_images \
+  --output-dir outputs/region_crops \
+  --pattern "*.png"
+```
 
 ## Notes
 
