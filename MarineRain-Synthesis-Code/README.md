@@ -329,4 +329,13 @@ python tools/crop_marked_regions.py \
 
 ## Citation
 
+The MarineRain manuscript is currently under review. If you use this code or dataset in your research, please cite the following manuscript. The citation will be updated with the final publication information after acceptance.
+
+```bibtex
+@misc{zhang2026marinerain,
+  title  = {From Real Rain Streaks to Physically Grounded Marine Rain--Fog Images: The MarineRain Benchmark},
+  author = {Zhang, Dan and Gao, Jingchen and Xu, Yingbin and Chen, Yaoran and Peng, Yan and Zhou, Yang and Ma, Liyan},
+  year   = {2026},
+  note   = {Manuscript under review}
+}
 
