@@ -1,1 +1,48 @@
+## Dataset Download
 
+### RealRain-2k Rain-Streak Patch Dataset
+
+RealRain-2k contains **2,000 real rain-streak patches** derived from images captured in our controllable rain-fog simulation chamber.
+
+- **Resolution:** 1024 × 1024 pixels
+- **Format:** JPEG
+- **Core subset:** 1,920 patches covering 40 rainfall levels, 12 exposure settings, and 4 color-temperature levels
+- **Extreme subset:** 80 additional long-exposure patches
+- **Approximate size:** 490 MB
+
+### Download
+
+- **Baidu Netdisk:**https://pan.baidu.com/s/1w709mIJV7UUQ0tlPyqH0qw?pwd=fpc9
+--来自百度网盘超级会员v6的分享
+- **Extraction code:** `fpc9 `
+
+### Directory Structure
+
+```text
+RealRain-2k/
+└── images/
+    ├── RR2K-C0001_R010_E01_K3000_F0502_P01.jpg
+    ├── ...
+    └── RR2K-X0080_R290_X3000M_K5000_F0140_P02.jpg
+```
+
+### Filename Convention
+
+Core samples use:
+
+```text
+RR2K-Cxxxx_Rxxx_Exx_Kxxxx_Fxxxx_Pxx.jpg
+```
+
+- `Cxxxx`: core-sample ID
+- `Rxxx`: nominal rainfall intensity in mm/h, from `R010` to `R400`
+- `Exx`: exposure-setting code, from `E01` (1/1000 s) to `E12` (1/10 s)
+- `Kxxxx`: nominal color temperature: `K3000`, `K4000`, `K5000`, or `K6000`
+- `Fxxxx`: source-frame ID
+- `Pxx`: spatial patch ID derived from that source frame
+
+Extreme samples use the prefix `RR2K-X`. An exposure token such as `X3000M` represents an exposure time of 3000 ms.
+
+> **Note:** Multiple patches may originate from the same source frame. When creating training and test splits, all images sharing the same `Fxxxx` source-frame ID should remain in the same subset to prevent data leakage.
+
+If you use this dataset, please cite the corresponding MarineRain paper.
