@@ -58,7 +58,6 @@ MarineRain 的数据构建遵循以下原则：
   <img src="Rainfall.jpg" alt="RealRain-2k 真实雨纹层示例" width="600">
 </div>
 
-**说明：**  
 雨线图来自模拟舱采集的真实雨纹层，雨纹形态随雨强与曝光设置呈现显著差异，可用于构建更真实的合成退化或作为雨纹先验参考。
 
 ---
@@ -68,8 +67,7 @@ MarineRain 的数据构建遵循以下原则：
 <div align="center">
   <img src="MarineRain.jpg" alt="MarineRain-8k 配对样本示例" width="800">
 </div>
-
-**说明：**  
+  
 每个样本包含一对 **rain-fog 退化图像**与其对应的 **clean 图像**，用于监督训练与客观指标评测（如 PSNR / SSIM）。退化由真实雨纹层叠加并与深度相关的雾散射一致耦合生成。
 
 ---
